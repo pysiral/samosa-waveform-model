@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "samosa_waveform_model"
+description = "SAMOSA(+) radar altimeter waveform model"
+readme = "README.md"
+version = "0.1"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+keywords = []
+authors = [
+  { name = "Stefan Hendricks", email = "stefan.hendricks@awi.de" },
+]
+classifiers = [
+  "Topic :: Scientific/Engineering",
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12"
+]
+
+dependencies = [
+    "bottleneck",
+    "numpy",
+]
+
+[project.optional-dependencies]
+tests = [
+    "flake8",
+    "isort",
+    "pytest",
+    "coverage"
+]
+dev = [
+    "matplotlib",
+    "notebook",
+    "ipykernel"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"samosa_waveform_model.lut" = ["*.txt"]
