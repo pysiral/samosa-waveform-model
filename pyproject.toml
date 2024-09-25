@@ -3,7 +3,7 @@ requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "samosa_waveform_model"
+name = "samosa-waveform-model"
 description = "SAMOSA(+) radar altimeter waveform model"
 readme = "README.md"
 version = "0.1"
