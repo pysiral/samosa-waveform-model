@@ -24,6 +24,7 @@ class SAMOSALookupTables(object):
         lut_folder = Path(__file__).parent / "lut"
         kwargs = dict(dtype='float', comments='#', delimiter=None)
 
+        # print("Read LUTs from", lut_folder)
         self.f0 = np.genfromtxt(lut_folder / "LUT_F0.txt", **kwargs)
         self.f1 = np.genfromtxt(lut_folder / "LUT_F1.txt", **kwargs)
 
@@ -48,3 +49,6 @@ class SAMOSALookupTables(object):
     @property
     def alphapower_noweight_file(self) -> str:
         return 'alphaPower_table_CONSTANT_SWH20_10_Feb_2020(CS2_NOHAMMING).txt'
+
+
+CS2_LOOKUP_TABLES = SAMOSALookupTables()
