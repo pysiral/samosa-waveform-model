@@ -6,13 +6,36 @@
 
 __author__ = "Stefan Hendricks <stefan.hendricks@awi.de>"
 
+import warnings
+from warnings import warn
 import bottleneck as bn
+import pandas as pd
 import numpy as np
+from typing import Union
 from typing import Dict, Optional, Literal
 
 from samosa_waveform_model.dataclasses import (SensorParameters, PlatformLocation, SARParameters,
                                                CONSTANTS, WaveformModelOutput, WaveformModelParameters)
-from samosa_waveform_model.lut import SAMOSALookupTables
+from samosa_waveform_model.lut import CS2_LOOKUP_TABLES
+
+
+from samosa_waveform_model.funcs_py import (compute_gl, compute_gamma0, compute_t_kappa, compute_f0, compute_f1,
+                                            ddm_mask_ranges)
+
+
+# try:
+#     from samosa_waveform_model.funcs import (compute_gl, compute_gamma0, compute_t_kappa, compute_f0, compute_f1,
+#                                             ddm_mask_ranges)
+# except ImportError:
+#     msg = """
+#     Could not import the compiled functions for the SAMOSA+ waveform model.
+#     Please install the compiled functions module func by running
+#     'python setup.py build_ext --inplace
+#     -> Using python implementation instead
+#     """
+#     warnings.warn(msg)
+#     from samosa_waveform_model.funcs_py import (compute_gl, compute_gamma0, compute_t_kappa, compute_f0, compute_f1,
+#                                             ddm_mask_ranges)
 
 
 class ScenarioData(object):
@@ -85,6 +108,7 @@ class SAMOSAWaveformModel(object):
             weight_factor: float = 1.4705,
             mask_ranges: bool = None,
             mode: Literal[1, 2] = 1,
+            collect_fit_params: bool = False
     ) -> None:
         """
         Initialize the forward model
@@ -103,9 +127,12 @@ class SAMOSAWaveformModel(object):
         self.weight_factor = weight_factor
         self.mode = mode
         self.mask_ranges = mask_ranges
-        self.lut = SAMOSALookupTables()
+        self.lut = CS2_LOOKUP_TABLES
         self.static_parameters = {}
         self.set_mode(self.mode)
+        self.collect_fit_params = collect_fit_params
+        self.fit_params = []
+        self.generate_ddm_counter = 0
 
     def set_mode(self, mode_num: Literal[1, 2]) -> None:
         """
@@ -173,24 +200,26 @@ class SAMOSAWaveformModel(object):
         tau = self.scenario.rp.tau - wfm.epoch
         beam_index = self.scenario.sar.beam_index
 
+        # --- Collect the waveform model parameters if requested --->
+        # This is useful to restore the parameters variations
+        # in an optimization process
+        if self.collect_fit_params:
+            self.fit_params.append(wfm)
+
         # --- Compute variables independent of waveform model parameters --->
         # NOTE: For repeated computations, these all need to be computed once
-
-        # Lx: along-track resolution size
-        # TODO: Add weighting (Lx, alpha, alpha_power changes)
-
         p = self.static_parameters
 
         dk = (tau * rp.bandwidth)
         yk = 0 * dk
-        yk[np.where(dk > 0)] = p["Ly"] * np.sqrt(dk[np.where(dk > 0)])
+        dk_positive = np.where(dk > 0)
+        yk[dk_positive] = p["Ly"] * np.sqrt(dk[dk_positive])
 
         sigma_s = (swh / (4. * p["Lz"]))
 
         # surface elevation standard deviation
         sigma_z = (swh / 4.)
 
-        # TODO: Add switch for weighted and fit steps (according to sampy)
         alpha_p, alpha_power = self.get_alpha_power(swh)
 
         gl = compute_gl(alpha_p, p["Lx"], p["Ly"], p["Lz"], beam_index, p["ls"], swh)
@@ -232,11 +261,15 @@ class SAMOSAWaveformModel(object):
 
         waveform_model = wfm.amplitude_scale * (waveform_power/peak_power + wfm.thermal_noise)
 
+        # waveform_model_scaled_power = amplitude_scale * (pr / np.nanmax(pr)) + self.normed_waveform.thermal_noise
+
+        self.generate_ddm_counter += 1
+
         # Compile the output
         return WaveformModelOutput(
             tau,
             waveform_model,
-            peak_power,
+            wfm.amplitude_scale,
             delay_doppler_map,
             delay_doppler_map_masked,
             wfm.epoch,
@@ -278,77 +311,5 @@ class SAMOSAWaveformModel(object):
 
         self.static_parameters = p
 
-
-def compute_gamma0(alpha_y, yp, alpha_x, nu, alt, xl, xp, yk):
-    xl_ = xl[None, :]
-    yk_ = yk[:, None]
-    alt2 = alt ** 2
-    return np.exp(
-        -alpha_y * yp ** 2 - alpha_x * (xl_ - xp) ** 2. - xl_ ** 2 * nu / alt2 -
-        (alpha_y + nu / alt2) * yk_ ** 2) * np.cosh(2. * alpha_y * yp * yk_)
-
-
-def compute_t_kappa(z, dk, nu, alt, alpha_y, yp, ly):
-    # TODO: Can dimension be inferred from other parameter
-    t_kappa = np.zeros(np.shape(z))
-
-    dk_positive = dk > 0
-    dk_positive_idx = np.where(dk_positive)
-    dk_negative_idx = np.where(np.logical_not(dk_positive))
-    dk_positive_sqrt = np.sqrt(dk[dk_positive_idx])
-
-    t_kappa[dk_positive_idx, :] = (
-            (1 + nu / ((alt ** 2) * alpha_y)) - yp / (ly * dk_positive_sqrt) * np.tanh(
-             2 * alpha_y * yp * ly * dk_positive_sqrt)[None, :]).T
-    t_kappa[dk_negative_idx, :] = (1 + nu / ((alt ** 2) * alpha_y)) - 2 * alpha_y * yp ** 2
-    return t_kappa
-
-
-def compute_f0(csi, csi_min_f0, csi_max_f0, z, lut):
-    f0 = np.zeros(np.shape(z))
-    clip_f0 = np.bitwise_and(csi >= csi_min_f0, csi <= csi_max_f0)
-    idx = np.floor((len(lut.f0[:, 0]) - 1) * ((csi[clip_f0] - csi_min_f0) / (csi_max_f0 - csi_min_f0))).astype(int)
-    f0[clip_f0] = (csi[clip_f0] - lut.f0[idx, 0]) * ((lut.f0[idx + 1, 1] - lut.f0[idx, 1]) / (
-            lut.f0[idx + 1, 0] - lut.f0[idx, 0])) + lut.f0[idx, 1]
-
-    idx_max_f0 = np.where(csi > csi_max_f0)
-    f0[idx_max_f0] = 1. / 2. * np.sqrt(np.pi) / (z[idx_max_f0]) ** (1. / 4) * (
-            1. + 3. / (32. * z[idx_max_f0]) + 105. / (
-            2048. * (z[(csi > csi_max_f0)]) ** 2) + 10395. / (
-                    196608. * (z[idx_max_f0]) ** 3))
-    f0[np.where(csi == 0)] = (1. / 2.) * (np.pi * 2 ** (3. / 4.)) / (2. * CONSTANTS.gamma_3_4)
-    f0[np.where(csi < csi_min_f0)] = 0
-    return f0
-
-
-def compute_f1(csi, csi_min_f1, csi_max_f1, z, lut):
-    clip_f1 = np.bitwise_and(csi >= csi_min_f1, csi <= csi_max_f1)
-    f1 = np.zeros(np.shape(z))
-    idx = np.floor((len(lut.f1[:, 0]) - 1) * ((csi[clip_f1] - csi_min_f1) / (csi_max_f1 - csi_min_f1))).astype(int)
-    f1[clip_f1] = (csi[clip_f1] - lut.f1[idx, 0]) * ((lut.f1[idx + 1, 1] - lut.f1[idx, 1]) / (
-            lut.f1[idx + 1, 0] - lut.f1[idx, 0])) + lut.f1[idx, 1]
-    idx_max_f1 = np.where(csi > csi_max_f1)
-    f1[idx_max_f1] = (1. / 2.) * 1. / 4. * np.sqrt(np.pi) / (z[idx_max_f1]) ** (3. / 4.)
-    f1[np.where(csi == 0)] = -(1. / 2.) * (2. ** (3. / 4.)) * CONSTANTS.gamma_3_4 / 2.
-    f1[np.where(csi < csi_min_f1)] = 0
-    return f1
-
-
-def compute_gl(alpha_p, lx, Ly, Lz, l, ls, swh):
-    return 1. / np.sqrt(
-        alpha_p ** 2 + 4. * (alpha_p ** 2) * (lx / Ly) ** 4 * (l - ls) ** 2 + np.sign(swh) * (swh / (4. * Lz)) ** 2
-    )
-
-
-def ddm_mask_ranges(ddm, mask_ranges, geo, lx, span, dr, beam_index):
-    if mask_ranges is None:
-        mask_ranges_demin = geo.altitude * (np.sqrt(1 + (geo.kappa * ((lx * beam_index) / geo.altitude) ** 2)) - 1)
-    else:
-        mask_ranges = np.delete(mask_ranges, span)
-        mask_ranges_demin = mask_ranges - min(mask_ranges)
-    num_range_gates = ddm.shape[0]
-    r = np.tile(mask_ranges_demin, (num_range_gates, 1))
-    dr_tiled = np.tile(dr * np.arange(num_range_gates - 1, -1, -1), (len(beam_index), 1)).T
-    ddm_masked = ddm.copy()
-    ddm_masked[np.where(r >= dr_tiled)] = 0
-    return ddm_masked
+    def get_fit_params(self) -> Optional[pd.DataFrame]:
+        return pd.DataFrame(self.fit_params) if self.collect_fit_params else None

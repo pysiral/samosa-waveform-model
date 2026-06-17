@@ -8,6 +8,7 @@ __author__ = "Stefan Hendricks <stefan.hendricks@awi.de>"
 
 from samosa_waveform_model.dataclasses import SensorParameters, SARParameters, PlatformLocation, WaveformModelParameters
 from samosa_waveform_model.model import ScenarioData, SAMOSAWaveformModel
+from samosa_waveform_model.lut import CS2_LOOKUP_TABLES
 
 __all__ = ["SARParameters", "SensorParameters", "PlatformLocation", "ScenarioData", "WaveformModelParameters",
-           "SAMOSAWaveformModel"]
+           "SAMOSAWaveformModel", "CS2_LOOKUP_TABLES"]
