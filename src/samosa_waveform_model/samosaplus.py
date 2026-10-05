@@ -276,7 +276,7 @@ class SAMOSAFitHouseKeeping(object):
         """
         self.collect_fit_params = collect_fit_params
         self.fit_params = []
-        self.generate_ddm_counter = 0
+        self.ddm_counter = 0
 
     def append(self, waveform_model_parameters: "WaveformModelParameters") -> None:
         """
@@ -285,7 +285,7 @@ class SAMOSAFitHouseKeeping(object):
         :param waveform_model_parameters: The fit parameters to append.
         """
         self.fit_params.append(waveform_model_parameters)
-        self.generate_ddm_counter += 1
+        self.ddm_counter += 1
 
 
 class SAMOSAWaveformModelConfig(BaseModel):
@@ -474,6 +474,7 @@ class SAMOSAWaveformModel(object):
                 waveform_power = bn.nansum(delay_doppler_map_masked, 1) / len(beam_index)
             case False:
                 waveform_power = bn.nansum(delay_doppler_map, 1) / len(beam_index)
+
 
         peak_power = bn.nanmax(waveform_power)
         if self.cfg.norm_model_power:
